@@ -71,20 +71,39 @@ def estimate_replication_cost(database_ids,replication_frequency_minutes, start_
         if start_time > end_time:
             raise ValueError(f"Start time {start_time} cannot be more than end time {end_time}.")
     
-        return database_ids, replication_frequency_minutes, start_time, end_time
+        return database_ids, replication_frequency_minutes, start_time, end_time   
 
-        
+    def init():
+        -- todo: set connection_params correctly
+        connection_params = Null
+        session = snowflake.snowpark.Session.builder.configs(connection_params).create()
+
+        return session
+
+    def get_all_tables(session):
+        query = f"""
+            -- Get all non dropped tables for this db id
+            SELECT t.id, db.id FROM 
+            snowhouse_import.awsuswest2preprod12.table_etl_v t
+            join snowhouse_import.awsuswest2preprod12.schema_etl_v s on t.parent_id = s.id
+            join snowhouse_import.awsuswest2preprod12.database_etl_v db on s.parent_id = db.id
+            WHERE t.deleted_on is NULL and t.created_on is NOT NULL
+            AND db.id IN ({tuple(database_ids)});"""
+
+        tables = session.sql(query).collect()
+        return tables
+
+    def create_error_with_message(message):
+        raise ValueError(json.dumps({"error": message}))
 
     database_ids, replication_frequency_minutes, start_time, end_time = validate_params(database_ids, replication_frequency_minutes, start_time, end_time)
-    
+    session = init()    
 
     -- # Step 1: Get all tables in the database using SQL
-    session = snowflake.snowpark.Session.builder.configs("<your_connection_params>").create()
-    query = f"SELECT table_id, account_id, created_on FROM information_schema.tables WHERE database_id = {database_id}"
-    tables = session.sql(query).collect()
     
+    tables = get_all_tables(session, database_ids)    
     if not tables:
-        return json.dumps({"error": f"Database not found for databaseId={database_id}"})
+        create_error_with_message(f"No active tables found in the databases passed {database_ids}")
     
     added_files = 0
     added_bytes = 0
